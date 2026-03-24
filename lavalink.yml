@@ -1,0 +1,19 @@
+server:
+  port: 2333
+  address: 0.0.0.0
+  password: "youshallnotpass"
+
+lavalink:
+  plugins:
+    - name: "lavaplayer-plugin"
+      repository: "https://github.com/lavalink-devs/lavalink-plugins"
+      version: "1.0.0"
+
+plugins:
+  lavaplayer-plugin:
+    applemusic:
+      enabled: true
+    spotify:
+      enabled: true
+      clientId: ""
+      clientSecret: ""

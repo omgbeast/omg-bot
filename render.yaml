@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: omg-bot
+    env: node
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /
+    envVars:
+      - key: DISCORD_TOKEN
+        sync: false
+      - key: DB_PATH
+        value: /data/bot.db
