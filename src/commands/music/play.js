@@ -1,35 +1,67 @@
 import { SlashCommandBuilder } from 'discord.js';
-import { Manager } from 'erela.js';
+import Spotify from 'spotify-web-api-node';
+import { createAudioPlayer, createAudioResource, joinVoiceChannel } from '@discordjs/voice';
+import ytdl from '@distube/ytdl-core';
 
-let manager = null;
+const spotify = new Spotify({
+  clientId: process.env.SPOTIFY_CLIENT_ID || '9395f0bbe78b4f8698375861ff9d2026',
+  clientSecret: process.env.SPOTIFY_CLIENT_SECRET || '50f63028fdec402c9b2e8909923b1a22',
+});
 
-function getManager(client) {
-  if (!manager) {
-    manager = new Manager({
-      nodes: [
-        {
-          host: 'localhost',
-          port: 2333,
-          password: 'youshallnotpass',
-        },
-      ],
-      send: (id, payload) => {
-        const guild = client.guilds.cache.get(id);
-        if (guild) guild.shard.send(payload);
-      },
-    });
+let player = null;
+let queue = [];
 
-    manager.on('nodeReady', () => console.log('Lavalink ready'));
-    manager.connect();
+async function getSpotifyTrack(query) {
+  try {
+    const data = await spotify.clientCredentialsGrant();
+    spotify.setAccessToken(data.body.access_token);
+
+    if (query.includes('open.spotify.com')) {
+      // Spotify URL
+      const track = await spotify.getTrack(query.split('/').pop().split('?')[0]);
+      return {
+        title: track.body.name,
+        artist: track.body.artists[0].name,
+        thumbnail: track.body.album.images[0]?.url,
+        searchQuery: `${track.body.name} ${track.body.artists[0].name}`,
+      };
+    } else {
+      // Search query
+      const result = await spotify.searchTracks(query, { limit: 1 });
+      if (result.body.tracks.items.length === 0) return null;
+      const track = result.body.tracks.items[0];
+      return {
+        title: track.name,
+        artist: track.artists[0].name,
+        thumbnail: track.album.images[0]?.url,
+        searchQuery: `${track.name} ${track.artists[0].name}`,
+      };
+    }
+  } catch (error) {
+    console.error('Spotify error:', error.message);
+    return null;
   }
-  return manager;
+}
+
+async function searchYouTube(query) {
+  try {
+    const searchQuery = encodeURIComponent(query);
+    const url = `https://www.youtube.com/results?search_query=${searchQuery}`;
+
+    // Use ytdl-core to search
+    const info = await ytdl.getInfo(`ytsearch:${query}`);
+    return info.videoDetails.videoId;
+  } catch (error) {
+    console.error('YouTube search error:', error.message);
+    return null;
+  }
 }
 
 export default {
   data: new SlashCommandBuilder()
     .setName('play')
-    .setDescription('Play a song from YouTube')
-    .addStringOption(opt => opt.setName('query').setDescription('Song name or URL').setRequired(true)),
+    .setDescription('Play a song from YouTube or Spotify')
+    .addStringOption(opt => opt.setName('query').setDescription('Song name, URL, or Spotify link').setRequired(true)),
   cooldown: 5,
 
   async execute(interaction) {
@@ -42,31 +74,44 @@ export default {
 
     await interaction.deferReply();
 
-    const m = getManager(interaction.client);
-    const isUrl = query.includes('youtube.com') || query.includes('youtu.be');
+    // Get track info from Spotify
+    const trackInfo = await getSpotifyTrack(query);
+    if (!trackInfo) {
+      return interaction.editReply('Could not find that track!');
+    }
+
+    // Try to get YouTube URL
+    await interaction.editReply(`Found: **${trackInfo.title}** by ${trackInfo.artist}. Searching YouTube...`);
+
+    let videoId;
+    try {
+      const result = await ytdl.getInfo(`ytsearch:${trackInfo.searchQuery}`);
+      videoId = result.videoDetails.videoId;
+    } catch {
+      return interaction.editReply('Could not find on YouTube!');
+    }
+
+    const youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
+
+    // Join voice channel and play
+    const connection = joinVoiceChannel({
+      channelId: voiceChannel.id,
+      guildId: interaction.guild.id,
+      adapterCreator: interaction.guild.voiceAdapterCreator,
+    });
 
     try {
-      const result = await m.search(isUrl ? query : `ytsearch:${query}`, interaction.user);
-      if (!result.tracks.length) {
-        return interaction.editReply('No results found!');
-      }
+      const stream = ytdl(youtubeUrl, { filter: 'audioonly', quality: 'highestaudio' });
+      const resource = createAudioResource(stream);
 
-      let player = m.players.get(interaction.guild.id);
-      if (!player) {
-        player = m.createPlayer({
-          guildId: interaction.guild.id,
-          voiceChannel: voiceChannel.id,
-          textChannel: interaction.channel.id,
-        });
-      }
+      player = createAudioPlayer();
+      player.play(resource);
+      connection.subscribe(player);
 
-      player.queue.add(result.tracks[0]);
-      if (!player.playing) player.play();
-
-      await interaction.editReply(`Added **${result.tracks[0].title}** to queue`);
+      await interaction.editReply(`Now playing: **${trackInfo.title}** by ${trackInfo.artist}`);
     } catch (error) {
-      console.error('Play error:', error);
-      await interaction.editReply('Error playing track!');
+      console.error('Playback error:', error);
+      await interaction.editReply('Error playing the song!');
     }
   }
 };

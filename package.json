@@ -17,6 +17,8 @@
     "erela.js": "^2.4.0",
     "libsodium-wrappers": "^0.7.16",
     "play-dl": "^1.9.6",
+    "spotify-web-api-node": "^5.0.2",
+    "youtube-sr": "^4.3.12",
     "ytdl-core": "^4.11.5"
   }
 }
